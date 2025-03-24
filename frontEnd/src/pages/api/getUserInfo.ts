@@ -1,35 +1,32 @@
 import { GraphQLClient, gql } from "graphql-request";
 
-// URL tvého Vendure GraphQL API
 const VENDURE_API_URL = "http://localhost:3000/shop-api";
 
-const client = new GraphQLClient(VENDURE_API_URL);
+const client = new GraphQLClient(VENDURE_API_URL, {
+  credentials: 'include', // Důležité pro předávání cookies
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
 
-const GET_USER_PROFILE = gql`
-  query GetUserProfile {
-    me {
+const GET_CURRENT_USER = gql`
+  query GetCurrentUser {
+    activeCustomer {
       id
       firstName
       lastName
-      email
+      emailAddress
     }
   }
 `;
 
 export async function getUserInfo() {
-  const accessToken = localStorage.getItem("accessToken");
-
-  if (!accessToken) {
-    throw new Error("Uživatel není přihlášen.");
-  }
-
-  client.setHeader("Authorization", `Bearer ${accessToken}`);
-
   try {
-    const data:any = await client.request(GET_USER_PROFILE);
-    return data.me;
+    const data:any = await client.request(GET_CURRENT_USER);
+    console.log("Data o uživateli:", data);
+    return data.activeCustomer;
   } catch (error) {
-    console.error("Chyba při získávání profilových informací:", error);
-    throw new Error("Nelze získat profil.");
+    console.error("Chyba při získávání informací o uživateli:", error);
+    throw error;
   }
 }

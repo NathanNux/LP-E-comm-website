@@ -3,18 +3,26 @@ import {
     DefaultJobQueuePlugin,
     DefaultSearchPlugin,
     VendureConfig,
+    NativeAuthenticationStrategy
 } from '@vendure/core';
 import { defaultEmailHandlers, EmailPlugin, FileBasedTemplateLoader } from '@vendure/email-plugin';
 import { AssetServerPlugin } from '@vendure/asset-server-plugin';
 import { AdminUiPlugin } from '@vendure/admin-ui-plugin';
 import 'dotenv/config';
 import path from 'path';
-
 const IS_DEV = process.env.APP_ENV === 'dev';
 const serverPort = +process.env.PORT || 3000;
 
+
 export const config: VendureConfig = {
     apiOptions: {
+        cors: {
+            origin: ['http://localhost:3000', 'https://vase-frontend-domena.vercel.app', 'http://localhost:3001'],
+            credentials: true,
+            exposedHeaders: ['vendure-auth-token'],
+            allowedHeaders: ['Content-Type', 'Authorization', 'vendure-auth-token'],
+            methods: ['GET', 'POST', 'PUT', 'DELETE'],
+          },
         port: serverPort,
         adminApiPath: 'admin-api',
         shopApiPath: 'shop-api',
@@ -34,13 +42,20 @@ export const config: VendureConfig = {
     },
     authOptions: {
         tokenMethod: ['bearer', 'cookie'],
+        shopAuthenticationStrategy: [
+            new NativeAuthenticationStrategy(),
+        ],
         superadminCredentials: {
             identifier: process.env.SUPERADMIN_USERNAME,
             password: process.env.SUPERADMIN_PASSWORD,
         },
         cookieOptions: {
           secret: process.env.COOKIE_SECRET,
+          sameSite: 'lax',
+            secure: false, // v produkci nastavte na true
         },
+        requireVerification: false, // v produkci nastavte na true
+
     },
     dbConnectionOptions: {
         type: 'postgres',
