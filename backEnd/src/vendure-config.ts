@@ -3,18 +3,60 @@ import {
     DefaultJobQueuePlugin,
     DefaultSearchPlugin,
     VendureConfig,
-    NativeAuthenticationStrategy
+    NativeAuthenticationStrategy,
+    manualFulfillmentHandler,
+    defaultShippingCalculator,
+    ShippingCalculator,
+    LanguageCode
 } from '@vendure/core';
 import { defaultEmailHandlers, EmailPlugin, FileBasedTemplateLoader } from '@vendure/email-plugin';
 import { AssetServerPlugin } from '@vendure/asset-server-plugin';
 import { AdminUiPlugin } from '@vendure/admin-ui-plugin';
 import 'dotenv/config';
 import path from 'path';
+import { czechPaymentMethodHandler } from './czech-payment-handler';
+
+
 const IS_DEV = process.env.APP_ENV === 'dev';
 const serverPort = +process.env.PORT || 3000;
 
 
+// Vytvořte správně ShippingCalculator instanci místo implementace rozhraní
+export const czechShippingCalculator = new ShippingCalculator({
+    code: 'czech-shipping-calculator',
+    description: [{ languageCode: LanguageCode.en, value: 'Český kalkulátor dopravy' }], // Oprava: použití LanguageCode.en
+    args: {},
+    
+    calculate: (order:any, args:any) => {
+        let price = args.shippingMethod.price;
+        
+        // Příklad: Přidání poplatku za dobírku
+        if (args.shippingMethod.code === 'ceska-posta-dobirka' || 
+            args.shippingMethod.code === 'ppl-dobirka') {
+            price += 3000; // 30 Kč (v nejmenších jednotkách měny)
+        }
+        
+        // Příklad: Zdarma pro objednávky nad 1500 Kč
+        if (order.subTotal > 150000 && !args.shippingMethod.code.includes('dobirka')) {
+            price = 0;
+        }
+        
+        return price;
+    }
+});
+
 export const config: VendureConfig = {
+
+    shippingOptions: {
+        shippingCalculators: [
+          defaultShippingCalculator,
+          czechShippingCalculator,
+        ],
+        fulfillmentHandlers: [
+          manualFulfillmentHandler,
+        ],
+      },
+
     apiOptions: {
         cors: {
             origin: ['http://localhost:3000', 'https://vase-frontend-domena.vercel.app', 'http://localhost:3001'],
@@ -74,7 +116,7 @@ export const config: VendureConfig = {
         password: process.env.DB_PASSWORD,
     },
     paymentOptions: {
-        paymentMethodHandlers: [dummyPaymentHandler],
+        paymentMethodHandlers: [czechPaymentMethodHandler, dummyPaymentHandler],
     },
     // When adding or altering custom field definitions, the database will
     // need to be updated. See the "Migrations" section in README.md.
