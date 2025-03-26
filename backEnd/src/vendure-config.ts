@@ -7,7 +7,10 @@ import {
     manualFulfillmentHandler,
     defaultShippingCalculator,
     ShippingCalculator,
-    LanguageCode
+    LanguageCode,
+    PluginCommonModule,
+    Type,
+    createProxyHandler
 } from '@vendure/core';
 import { defaultEmailHandlers, EmailPlugin, FileBasedTemplateLoader } from '@vendure/email-plugin';
 import { AssetServerPlugin } from '@vendure/asset-server-plugin';
@@ -15,10 +18,12 @@ import { AdminUiPlugin } from '@vendure/admin-ui-plugin';
 import 'dotenv/config';
 import path from 'path';
 import { czechPaymentMethodHandler } from './czech-payment-handler';
+import { GopayPlugin } from './gopay-plugin';
 
-
+// v poli plugins přidejte:
 const IS_DEV = process.env.APP_ENV === 'dev';
 const serverPort = +process.env.PORT || 3000;
+
 
 
 // Vytvořte správně ShippingCalculator instanci místo implementace rozhraní
@@ -154,5 +159,6 @@ export const config: VendureConfig = {
                 apiPort: serverPort,
             },
         }),
+        GopayPlugin,
     ],
 };

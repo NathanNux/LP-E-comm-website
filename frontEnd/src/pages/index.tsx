@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { initGooglePay, completeOrderAfterGooglePay } from './api/googlePay';
+import { useEffect, useState, useRef } from "react";
 import { fetchProducts } from "./api/showAllProducts";
 import { fetchProductByName } from "./api/showProductByName";
 import { loginUser } from "./api/loginUser";
@@ -8,9 +7,8 @@ import { registerUser } from "./api/registerUser";
 import toast, { Toaster } from 'react-hot-toast';
 import { logoutUser } from "./api/logoutUser";
 import { getActiveOrder, ensureOrderInAddingItemsState, addItemToOrder, removeOrderLine } from "./api/cartApi";
-import { getShippingMethods, addCashOnDeliveryPayment, getPaymentMethods, setShippingMethod, addPayment, completeOrder, transitionOrderToArrangingPayment } from "./api/checkoutApi";
-
-
+import { getShippingMethods, diagnoseOrderState, verifyOrderBeforePayment, addCashOnDeliveryPayment, addGopayPayment, setCustomerForOrder, getPaymentMethods, setShippingMethod, addPayment, completeOrder, transitionOrderToArrangingPayment } from "./api/checkoutApi";
+import Image from "next/image";
 // Definice typů pro správnou typovou kontrolu
 interface User {
   id: string;
@@ -74,6 +72,8 @@ interface PaymentMethod {
 }
 
 export default function Home() {
+
+  const processingOrderRef = useRef(false);
 
   //stavy pro checkout
   const [isCheckout, setIsCheckout] = useState(false);
@@ -233,78 +233,13 @@ export default function Home() {
     }
   };
   
-  // Funkce pro výběr platební metody
   const handleSelectPayment = async (methodCode: string) => {
     setSelectedPaymentMethod(methodCode);
     
-    // Pokud je vybrán Google Pay, zůstaneme na stejné obrazovce pro platbu
-    // Jinak přejdeme na shrnutí
-    if (methodCode === 'google-pay') {
-      // Pouze nastavíme metodu, ale nepřecházíme na další krok
-      // Google Pay tlačítko se zobrazí v kartě a platba proběhne přes něj
-      notify("Platba proběhne přes Google Pay");
-      initializeGooglePay();
-    } else {
-      setCheckoutStep('summary');
-    }
+    // Přejdeme na souhrn objednávky bez ohledu na vybranou metodu
+    setCheckoutStep('summary');
   };
 
-  // Aktualizujeme funkci initializeGooglePay, aby používala dynamicky získanou platební metodu
-// Aktualizace Google Pay
-const initializeGooglePay = () => {
-  if (googlePayInitialized || !cart) return;
-  
-  try {
-    console.log("Inicializuji Google Pay s částkou:", cart.totalWithTax);
-    
-    // Kontrola existence kontejneru
-    const container = document.getElementById('google-pay-button-container');
-    if (!container) {
-      console.error("Kontejner pro Google Pay tlačítko neexistuje!");
-      return;
-    }
-    
-    // Inicializace pomocí GraphQL client a zpracování výsledku
-    initGooglePay(
-      cart.totalWithTax, 
-      async (paymentData) => {
-        console.log("Google Pay platba úspěšná:", paymentData);
-        
-        try {
-          // 1. Pouze přepneme objednávku do stavu PaymentSettled
-          // Nepřidáváme žádnou další platbu!
-          console.log("Dokončuji objednávku po platbě Google Pay...");
-          
-          // Použijeme speciální funkci pro dokončení objednávky po Google Pay
-          const result = await completeOrderAfterGooglePay(paymentData);
-          console.log("Výsledek dokončení objednávky:", result);
-          
-          if (!result.errorCode) {
-            setOrderCode(result.code || "");
-            setOrderComplete(true);
-            setCart(null);
-            notify("Objednávka byla úspěšně dokončena!");
-            
-            // Automatické přesměrování na produkty po 3 sekundách
-            setTimeout(() => {
-              setActiveSection('products');
-              loadProducts();
-            }, 3000);
-          } else {
-            notifyError(result.message || "Chyba při dokončování objednávky");
-          }
-        } catch (error: any) {
-          console.error("Chyba při dokončování objednávky:", error);
-          notifyError("Chyba při dokončování objednávky");
-        }
-      }
-    );
-    setGooglePayInitialized(true);
-  } catch (err) {
-    console.error("Chyba při inicializaci Google Pay:", err);
-    notifyError("Nepodařilo se inicializovat Google Pay");
-  }
-};
 
   // Funkce pro potvrzení objednávky
 // Funkce pro potvrzení objednávky
@@ -314,51 +249,326 @@ const initializeGooglePay = () => {
 // Aktualizujeme funkci pro dokončení objednávky, abychom ošetřili správný typ platební metody
 // Zjednodušená verze funkce pro dokončení objednávky
 // Přepište handleCompleteOrder pro použití přímé dobírky
+// ...existing code...
+
+// Funkce pro dokončení objednávky s předáváním parametrů
+// Nahraďte stávající funkci handleCompleteOrder
+
 const handleCompleteOrder = async () => {
+  console.log("Začínám proces dokončení objednávky");
+  
+  if (processingOrderRef.current) {
+    console.log("Zpracování objednávky již probíhá, ignoruji duplicitní požadavek");
+    return;
+  }
+  
+  processingOrderRef.current = true;
+  let processingOverlay: HTMLElement | null = null;
+  
   try {
-    console.log("Začínám proces dokončení objednávky");
-    
-    // Nejprve zkontrolujeme stav objednávky
-    if (cart && cart.state !== 'ArrangingPayment') {
-      try {
-        const transitionResult = await transitionOrderToArrangingPayment();
-        console.log("Objednávka přepnuta do stavu platby:", transitionResult);
-      } catch (error) {
-        console.warn("Varování při přechodu do stavu platby:", error);
-        // Pokračujeme i při chybě
-      }
-    }
-    
-    // Přidáme platbu dobírkou
-    const paymentResult = await addCashOnDeliveryPayment();
-    console.log("Výsledek přidání platby:", paymentResult);
-    
-    if (paymentResult.errorCode) {
-      notifyError(paymentResult.message || "Chyba při přidání platby");
+    // Kontrola základních podmínek
+    if (!currentUser) {
+      notifyError("Pro dokončení objednávky musíte být přihlášen");
+      setActiveSection('login');
       return;
     }
     
-    // Dokončíme objednávku
-    const result = await completeOrder();
-    console.log("Výsledek dokončení objednávky:", result);
-    
-    if (!result.errorCode) {
-      setOrderCode(result.code || "");
-      setOrderComplete(true);
-      setCart(null);
-      notify("Objednávka byla úspěšně dokončena!");
-      
-      // Automatické přesměrování na produkty po 3 sekundách
-      setTimeout(() => {
-        setActiveSection('products');
-        loadProducts();
-      }, 3000);
-    } else {
-      notifyError(result.message || "Chyba při dokončování objednávky");
+    if (!cart || !cart.lines || cart.lines.length === 0) {
+      notifyError("Váš košík je prázdný");
+      return;
     }
-  } catch (error: any) {
+    
+    if (!shippingAddress.fullName || !shippingAddress.streetLine1 || !selectedShippingMethod) {
+      notifyError("Nejsou vyplněny všechny potřebné údaje pro objednávku");
+      return;
+    }
+    
+    // 1. Nastavíme adresu doručení
+    console.log("1. Nastavuji adresu doručení");
+    const addressResponse = await fetch("http://localhost:3000/shop-api", {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `
+          mutation {
+            setOrderShippingAddress(
+              input: {
+                fullName: "${shippingAddress.fullName}",
+                streetLine1: "${shippingAddress.streetLine1}",
+                streetLine2: "${shippingAddress.streetLine2 || ''}",
+                city: "${shippingAddress.city}",
+                postalCode: "${shippingAddress.postalCode.replace(/\s/g, '')}",
+                countryCode: "${shippingAddress.countryCode}",
+                phoneNumber: "${shippingAddress.phoneNumber || ''}"
+              }
+            ) {
+              ... on Order { id }
+              ... on ErrorResult { errorCode message }
+            }
+          }
+        `
+      })
+    });
+    
+    const addressResult = await addressResponse.json();
+    console.log("Výsledek nastavení adresy:", addressResult);
+    
+    if (addressResult.data?.setOrderShippingAddress?.errorCode) {
+      notifyError(addressResult.data.setOrderShippingAddress.message || "Chyba při nastavení adresy");
+      return;
+    }
+    
+    // 2. Nastavíme doručovací metodu
+    console.log("2. Nastavuji doručovací metodu");
+    const shippingResponse = await fetch("http://localhost:3000/shop-api", {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `
+          mutation {
+            setOrderShippingMethod(shippingMethodId: "${selectedShippingMethod}") {
+              ... on Order { id }
+              ... on ErrorResult { errorCode message }
+            }
+          }
+        `
+      })
+    });
+    
+    const shippingResult = await shippingResponse.json();
+    console.log("Výsledek nastavení doručení:", shippingResult);
+    
+    if (shippingResult.data?.setOrderShippingMethod?.errorCode) {
+      notifyError(shippingResult.data.setOrderShippingMethod.message || "Chyba při nastavení doručení");
+      return;
+    }
+    
+    // 3. Propojíme zákazníka s objednávkou
+    console.log("3. Propojuji uživatele s objednávkou");
+    if (!currentUser) {
+      notifyError("Chybí údaje o uživateli");
+      return;
+    }
+    
+    if (!currentUser.id) {
+      const customerResponse = await fetch("http://localhost:3000/shop-api", {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `
+            mutation {
+              setCustomerForOrder(
+                input: {
+                  emailAddress: "${currentUser.emailAddress}",
+                  firstName: "${currentUser.firstName}",
+                  lastName: "${currentUser.lastName}"
+                }
+              ) {
+                ... on Order { 
+                  id 
+                  customer { 
+                    id 
+                    emailAddress
+                  } 
+                }
+                ... on ErrorResult { 
+                  errorCode 
+                  message 
+                }
+              }
+            }
+          `
+        })
+      });
+
+      const customerResult = await customerResponse.json();
+      console.log("Výsledek propojení uživatele:", customerResult);
+
+      if (customerResult.errors || customerResult.data?.setCustomerForOrder?.errorCode) {
+        const errorMsg = customerResult.errors?.[0]?.message || 
+                        customerResult.data?.setCustomerForOrder?.message || 
+                        "Chyba při propojení uživatele s objednávkou";
+        notifyError(errorMsg);
+        return;
+      }
+    }
+    
+    // 4. Přejdeme do stavu platby - přidáme overlay
+    console.log("4. Přecházím do stavu platby");
+    processingOverlay = document.createElement('div');
+    processingOverlay.style.position = 'fixed';
+    processingOverlay.style.top = '0';
+    processingOverlay.style.left = '0';
+    processingOverlay.style.width = '100%';
+    processingOverlay.style.height = '100%';
+    processingOverlay.style.backgroundColor = 'rgba(0,0,0,0.5)';
+    processingOverlay.style.display = 'flex';
+    processingOverlay.style.alignItems = 'center';
+    processingOverlay.style.justifyContent = 'center';
+    processingOverlay.style.zIndex = '9999';
+    processingOverlay.innerHTML = '<div style="background:#fff;padding:20px;border-radius:5px;">Zpracovávám objednávku...</div>';
+    document.body.appendChild(processingOverlay);
+    
+    // Vyčkáme chvíli pro stabilizaci stavu
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Pokusíme se o přechod do stavu platby přímo, bez použití funkce s problematickou hlavičkou
+    console.log("Přímé volání přechodu do stavu ArrangingPayment");
+    const transitionResponse = await fetch("http://localhost:3000/shop-api", {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `
+          mutation {
+            transitionOrderToState(state: "ArrangingPayment") {
+              ... on Order {
+                id
+                state
+              }
+              ... on OrderStateTransitionError {
+                errorCode
+                message
+                transitionError
+              }
+              ... on ErrorResult {
+                errorCode
+                message
+              }
+            }
+          }
+        `
+      })
+    });
+    
+    const transitionResult = await transitionResponse.json();
+    console.log("Výsledek přechodu do stavu platby:", transitionResult);
+    
+    if (transitionResult.data?.transitionOrderToState?.errorCode) {
+      notifyError(transitionResult.data.transitionOrderToState.message || "Nepodařilo se přejít do stavu platby");
+      return;
+    }
+    
+    // 5. Zpracování platby podle vybrané metody
+    // 5. Zpracování platby podle vybrané metody
+// 5. Zpracování platby podle vybrané metody
+// 5. Zpracování platby podle vybrané metody
+// 5. Zpracování platby podle vybrané metody
+console.log("5. Zpracovávám platbu metodou:", selectedPaymentMethod);
+
+// Diagnostika dostupných platebních metod
+console.log("Dostupné platební metody:", paymentMethods);
+
+// Získáme platební metodu z dostupných metod
+const paymentMethod = paymentMethods.find(m => m.code === selectedPaymentMethod);
+if (!paymentMethod) {
+  notifyError(`Platební metoda '${selectedPaymentMethod}' není dostupná.`);
+  return;
+}
+
+// Přidáme platbu - použijeme hlavní handler s potřebnými metadaty
+const paymentResponse = await fetch("http://localhost:3000/shop-api", {
+  method: 'POST',
+  credentials: 'include',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query: `
+      mutation {
+        addPaymentToOrder(
+          input: {
+            method: "czech-payment-method",
+            metadata: {
+              paymentMethod: "${selectedPaymentMethod}"
+            }
+          }
+        ) {
+          ... on Order {
+            id
+            code
+            state
+          }
+          ... on OrderPaymentStateError {
+            errorCode
+            message
+          }
+          ... on PaymentFailedError {
+            errorCode
+            message
+            paymentErrorMessage
+          }
+          ... on PaymentDeclinedError {
+            errorCode
+            message
+            paymentErrorMessage
+          }
+          ... on OrderStateTransitionError {
+            errorCode
+            message
+            transitionError
+          }
+          ... on ErrorResult {
+            errorCode
+            message
+          }
+        }
+      }
+    `
+  })
+});
+
+const paymentResult = await paymentResponse.json();
+console.log("Výsledek platby:", paymentResult);
+
+if (paymentResult.errors || paymentResult.data?.addPaymentToOrder?.errorCode) {
+  const errorMsg = paymentResult.errors?.[0]?.message || 
+                  paymentResult.data?.addPaymentToOrder?.message || 
+                  "Chyba při zpracování platby";
+  notifyError(errorMsg);
+  return;
+}
+
+// Zpracování úspěšné platby
+const order = paymentResult.data?.addPaymentToOrder;
+
+if (selectedPaymentMethod === 'gopay') {
+  // Pro GoPay zkontrolujeme, zda máme URL pro přesměrování
+  const activeOrder = await getActiveOrder();
+  console.log("Aktualizovaná objednávka po platbě:", activeOrder);
+  
+  if (activeOrder?.payments && activeOrder.payments[0]?.metadata?.paymentUrl) {
+    window.location.href = activeOrder.payments[0].metadata.paymentUrl;
+    return;
+  } else {
+    notifyError("Chybí URL pro přesměrování na platební bránu");
+    return;
+  }
+} else if (selectedPaymentMethod === 'cash-on-delivery') {
+  // Pro dobírku zobrazíme potvrzení
+  setOrderComplete(true);
+  setOrderCode(order?.code || "");
+  
+  // Vyčistíme košík a přesměrujeme zpět na produkty
+  setTimeout(() => {
+    setActiveSection('products');
+    loadProducts();
+  }, 3000);
+}
+  } catch (error) {
     console.error("Chyba při dokončování objednávky:", error);
-    notifyError(error.message || "Chyba při dokončování objednávky");
+    notifyError("Chyba při zpracování objednávky");
+  } finally {
+    // Vždy odstraníme overlay pokud existuje
+    if (processingOverlay && document.body.contains(processingOverlay)) {
+      document.body.removeChild(processingOverlay);
+    }
+    
+    // Nastavíme časovač pro resetování processing stavu
+    setTimeout(() => {
+      processingOrderRef.current = false;
+    }, 1000);
   }
 };
 
@@ -574,25 +784,6 @@ const handleRemoveFromCart = async (orderLineId: string) => {
     checkUserAndCart();
   }, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    if (checkoutStep === 'payment' && cart) {
-      console.log("Krok platby aktivní, čekám na vykreslení kontejneru...");
-      
-      setGooglePayInitialized(false);
-      
-      setTimeout(() => {
-        const googlePayContainer = document.getElementById('google-pay-button-container');
-        console.log("Kontrola kontejneru:", googlePayContainer ? "nalezen" : "nenalezen");
-        
-        if (googlePayContainer && !googlePayInitialized) {
-          console.log("Spouštím inicializaci Google Pay");
-          initializeGooglePay(); // <-- ZDE po vykreslení kontejneru
-        }
-      }, 1000);
-    }
-  }, [checkoutStep, cart]);
   return (
     <div className="container">
       <Toaster position="top-right" />
@@ -1034,94 +1225,85 @@ const handleRemoveFromCart = async (orderLineId: string) => {
           
           {/* Platební metody */}
           {checkoutStep === 'payment' && (
-            <div className="payment-methods">
-              <h3>Vyberte způsob platby</h3>
-              {paymentMethods.map((method:any) => (
-                <div 
-                  key={method.id} 
-                  className={`method-card ${selectedPaymentMethod === method.code ? 'selected' : ''}`}
-                  onClick={() => handleSelectPayment(method.code)}
-                >
-                  <h4>{method.name}</h4>
-                  <p>{method.description}</p>
-                </div>
-              ))}
-              
-              {/* Google Pay tlačítko */}
-              <div 
-                className={`method-card google-pay-card ${selectedPaymentMethod === 'google-pay' ? 'selected' : ''}`}
-                onClick={() => handleSelectPayment('google-pay')}
-              >
-                <h4>Google Pay (Testovací režim)</h4>
-                <p>Zaplatit rychle a bezpečně pomocí Google Pay</p>
-                
-                {/* Google Pay tlačítko kontejner */}
-                <div 
-                  id="google-pay-button-container" 
-                  className="google-pay-button-container"
-                  style={{ 
-                    minHeight: '40px', 
-                    margin: '15px 0', 
-                    border: '2px dashed red'  // Pro kontrolu, že kontejner existuje
-                  }}
-                ></div>
-                
-                {selectedPaymentMethod === 'google-pay' && (
-                  <div className="google-pay-info">
-                    <p>Google Pay tlačítko by se mělo zobrazit výše</p>
-                    <button 
-                      onClick={() => {
-                        console.log('Ruční inicializace Google Pay');
-                        // Pro jistotu resetujeme stav a zkusíme znovu
-                        setGooglePayInitialized(false);
-                        setTimeout(() => initializeGooglePay(), 100);
-                      }}
-                      className="btn-primary"
-                    >
-                      Zkusit načíst Google Pay
-                    </button>
-                    <p className="payment-test-info">Toto je testovací prostředí, žádné skutečné platby nebudou provedeny.</p>
-                  </div>
-                )}
-              </div>
-
-              
+  <div className="payment-methods">
+    <h3>Vyberte způsob platby</h3>
     
-    <div className="payment-navigation">
-      <button className="btn-secondary" onClick={() => setCheckoutStep('shipping')}>
-        Zpět k dopravě
-      </button>
-      
-      {selectedPaymentMethod && selectedPaymentMethod !== 'google-pay' && (
-        <button className="btn-primary" onClick={() => setCheckoutStep('summary')}>
-          Pokračovat k souhrnu
-        </button>
-      )}
+        {paymentMethods.map((method) => (
+          <div 
+            key={method.id}
+            className={`method-card ${selectedPaymentMethod === method.code ? 'selected' : ''}`}
+            onClick={() => handleSelectPayment(method.code)}
+          >
+            <h4>{method.name}</h4>
+            <p>{method.description}</p>
+            
+            {/* Zobrazit logo pro GoPay */}
+            {method.code === 'gopay' && (
+              <div className="payment-logo">
+                <Image 
+                  src="/images/gopay-logo.png" 
+                  alt="GoPay1" 
+                  width={100}
+                  height={100}
+                  className="max-h-[30px] mt-2" 
+                />
+              </div>
+            )}
+          </div>
+        ))}
+        
+
+            {orderComplete && (
+              <div className="order-complete">
+                <h3>Objednávka byla úspěšně dokončena!</h3>
+                <p>Kód objednávky: {orderCode}</p>
+                <p>Děkujeme za Váš nákup.</p>
+                <p className="redirect-info">Za 3 sekundy budete přesměrováni na seznam produktů...</p>
+                <div className="countdown-timer">
+                  <div className="spinner"></div>
+                </div>
+                <button onClick={() => {
+                  setActiveSection('products');
+                  loadProducts(); // Znovu načteme produkty pro aktuální stav zásob
+                }} className="btn-primary mt-3">
+                  Přejít na produkty ihned
+                </button>
+              </div>
+            )}
+            {/* Přidat další platební metody */}
+            <div 
+      className={`method-card ${selectedPaymentMethod === 'gopay' ? 'selected' : ''}`}
+      onClick={() => handleSelectPayment('gopay')}
+    >
+      <h4>GoPay</h4>
+      <p>Online platba kartou, bankovním převodem, Apple Pay nebo Google Pay</p>
+      <div className="payment-logo">
+        <Image
+          src="/images/gopay-logo.png" 
+          alt="GoPay2" 
+          width={100}
+          height={100}
+          className="max-h-[30px] mt-2" 
+        />
+      </div>
     </div>
-  </div>
-)}
-
-{orderComplete && (
-  <div className="order-complete">
-    <h3>Objednávka byla úspěšně dokončena!</h3>
-    <p>Kód objednávky: {orderCode}</p>
-    <p>Děkujeme za Váš nákup.</p>
-    <p className="redirect-info">Za 3 sekundy budete přesměrováni na seznam produktů...</p>
-    <div className="countdown-timer">
-      <div className="spinner"></div>
+    
+    <div 
+      className={`method-card ${selectedPaymentMethod === 'cash-on-delivery' ? 'selected' : ''}`}
+      onClick={() => handleSelectPayment('cash-on-delivery')}
+    >
+      <h4>Dobírka</h4>
+      <p>Zaplatíte při převzetí zboží</p>
     </div>
-    <button onClick={() => {
-      setActiveSection('products');
-      loadProducts(); // Znovu načteme produkty pro aktuální stav zásob
-    }} className="btn-primary mt-3">
-      Přejít na produkty ihned
-    </button>
-  </div>
-)}
-
-
-
-
+                <button 
+                  className="continue-button"
+                  onClick={() => setCheckoutStep('summary')}
+                  disabled={!selectedPaymentMethod}
+                >
+                  Pokračovat k souhrnu objednávky
+                </button>
+              </div>
+            )}
           
           {/* Shrnutí objednávky */}
           {checkoutStep === 'summary' && cart && (

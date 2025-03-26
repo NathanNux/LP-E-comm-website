@@ -1,4 +1,5 @@
 import { GraphQLClient, gql } from "graphql-request";
+import { getUserInfo } from './getUserInfo';
 
 const VENDURE_API_URL = "http://localhost:3000/shop-api";
 
@@ -8,6 +9,166 @@ const client = new GraphQLClient(VENDURE_API_URL, {
     'Content-Type': 'application/json',
   },
 });
+
+// Přidat do existujícího souboru
+
+// Přidat do existujícího souboru
+
+// Funkce pro přidání GoPay platby
+// Upravit funkci pro GoPay platbu
+
+// Funkce pro přidání GoPay platby
+// Nahraďte stávající funkci addGopayPayment
+
+export async function addGopayPayment() {
+  try {
+    console.log("Přidávám platbu přes GoPay");
+    
+    const response = await fetch(VENDURE_API_URL, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `
+          mutation {
+            addPaymentToOrder(input: {
+              method: "czech-payment-method",
+              metadata: { paymentMethod: "gopay" }
+            }) {
+              ... on Order {
+                id
+                code
+                state
+                payments {
+                  id
+                  amount
+                  state
+                  metadata
+                }
+              }
+              ... on ErrorResult {
+                errorCode
+                message
+              }
+            }
+          }
+        `
+      })
+    });
+
+    const data = await response.json();
+    console.log("Odpověď z GoPay platby:", data);
+    
+    if (data.errors) {
+      console.error("GraphQL chyby:", data.errors);
+      return {
+        errorCode: 'GRAPHQL_ERROR',
+        message: data.errors.map((e: any) => e.message).join(', ')
+      };
+    }
+    
+    if (data.data.addPaymentToOrder.errorCode) {
+      return data.data.addPaymentToOrder;
+    }
+    
+    // Získáme URL pro přesměrování na platební bránu
+    const paymentUrl = data.data.addPaymentToOrder.payments[0]?.metadata?.paymentUrl;
+    
+    if (!paymentUrl) {
+      return {
+        errorCode: 'NO_PAYMENT_URL',
+        message: 'Chybí URL pro přesměrování na platební bránu'
+      };
+    }
+    
+    return {
+      success: true,
+      paymentUrl,
+      order: data.data.addPaymentToOrder
+    };
+  } catch (error: any) {
+    console.error("Chyba při přidávání GoPay platby:", error);
+    return {
+      errorCode: 'API_ERROR',
+      message: error.message || "Chyba při přidávání GoPay platby"
+    };
+  }
+}
+
+// ...existing code...
+
+// Funkce pro propojení objednávky s aktuálním zákazníkem
+// ...existing code...
+
+export async function setCustomerForOrder(firstName?: string, lastName?: string, email?: string) {
+  try {
+    console.log("Začínám nastavovat zákazníka pro objednávku");
+    
+    const response = await fetch(VENDURE_API_URL, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          mutation {
+            setCustomerForOrder(
+              input: {
+                emailAddress: "${email || ''}",
+                firstName: "${firstName || ''}",
+                lastName: "${lastName || ''}"
+              }
+            ) {
+              ... on Order {
+                id
+                customer {
+                  id
+                  firstName
+                  lastName
+                  emailAddress
+                }
+              }
+              ... on ErrorResult {
+                errorCode
+                message
+              }
+            }
+          }
+        `
+      })
+    });
+
+    const data = await response.json();
+    console.log("Odpověď setCustomerForOrder:", data);
+    
+    if (data.errors) {
+      console.error("GraphQL chyby při nastavování zákazníka:", data.errors);
+      return {
+        errorCode: 'GRAPHQL_ERROR',
+        message: data.errors.map((e: any) => e.message).join(', ')
+      };
+    }
+    
+    // Oprava - použijeme správný název odpovědi
+    if (data.data.setCustomerForOrder && data.data.setCustomerForOrder.errorCode) {
+      // Speciální případ - když je uživatel již přihlášen
+      if (data.data.setCustomerForOrder.errorCode === 'ALREADY_LOGGED_IN_ERROR') {
+        console.log("Uživatel je již přihlášen, objednávka již má přiřazeného zákazníka");
+        return { success: true }; // Vrátíme úspěch, protože zákazník už je nastaven
+      }
+      return data.data.setCustomerForOrder;
+    }
+    
+    return data.data.setCustomerForOrder || { success: true };
+  } catch (error: any) {
+    console.error("Chyba při nastavování zákazníka pro objednávku:", error);
+    return {
+      errorCode: 'API_ERROR',
+      message: error.message || "Chyba při nastavování zákazníka"
+    };
+  }
+}
 
 // Přidat adresu doručení (nutné před nastavením doručovací metody)
 const SET_SHIPPING_ADDRESS = gql`
@@ -488,47 +649,157 @@ export async function addPayment(method: string, metadata?: any) {
 }
 
 // Přidejte novou funkci pro transition do stavu pro platbu
+// Přidejte novou funkci pro transition do stavu pro platbu
+// Přidejte novou funkci pro transition do stavu pro platbu
+// Přidejte opravenou funkci pro transition do stavu pro platbu
+// Nahraďte stávající funkci transitionOrderToArrangingPayment touto verzí
+// Nahraďte aktuální funkci transitionOrderToArrangingPayment
+
+// Nahraďte stávající funkci transitionOrderToArrangingPayment
+
+// Nahraďte stávající funkci:
+
+// Nahraďte stávající funkci
+
 export async function transitionOrderToArrangingPayment() {
+  // Tato proměnná zabrání duplicitním voláním
+  const requestId = Date.now().toString();
+  
   try {
-    const response = await fetch(`${VENDURE_API_URL}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      credentials: 'include',
-      body: JSON.stringify({
-        query: `
-          mutation {
-            transitionOrderToState(state: "ArrangingPayment") {
-              ... on Order {
-                id
-                state
-              }
-              ... on OrderStateTransitionError {
-                errorCode
-                message
-                transitionError
-                fromState
-                toState
+    console.log(`Začínám přechod do stavu ArrangingPayment (request ID: ${requestId})`);
+    
+    // Uděláme až 3 pokusy o přechod do stavu ArrangingPayment
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      console.log(`Pokus #${attempt} o přechod do stavu ArrangingPayment`);
+      
+      const response = await fetch(VENDURE_API_URL, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Request-ID': requestId, // Pro zabránění duplicitním požadavkům
+        },
+        body: JSON.stringify({
+          query: `
+            mutation {
+              transitionOrderToState(state: "ArrangingPayment") {
+                ... on Order {
+                  id
+                  code
+                  state
+                }
+                ... on OrderStateTransitionError {
+                  errorCode
+                  message
+                  transitionError
+                  fromState
+                  toState
+                }
+                ... on ErrorResult {
+                  errorCode
+                  message
+                }
               }
             }
-          }
-        `
-      }),
-    });
+          `
+        })
+      });
 
-    const data = await response.json();
-    
-    if (data.errors) {
-      throw new Error(data.errors[0].message);
+      const data = await response.json();
+      console.log(`Pokus #${attempt}: Odpověď z přechodu do stavu platby:`, data);
+      
+      // Pokud přechod byl úspěšný nebo chyba není způsobena stavem, vrátíme výsledek
+      if (!data.errors && !data.data?.transitionOrderToState?.errorCode) {
+        console.log("Přechod do stavu platby byl úspěšný");
+        return data.data.transitionOrderToState;
+      }
+      
+      if (data.data?.transitionOrderToState?.errorCode === 'ORDER_STATE_TRANSITION_ERROR') {
+        // Pokud je chyba "už jsme v cílovém stavu", považujeme to za úspěch
+        if (data.data.transitionOrderToState.fromState === 'ArrangingPayment') {
+          console.log("Objednávka je již ve stavu ArrangingPayment");
+          return {
+            state: 'ArrangingPayment',
+            id: data.data.transitionOrderToState.id || ''
+          };
+        }
+        
+        // Jinak se pokusíme o reset stavu
+        console.log("Pokusím se o stabilizaci stavu před dalším pokusem");
+        await ensureStableOrderState();
+        
+        // Přidejme krátkou pauzu před dalším pokusem
+        await new Promise(resolve => setTimeout(resolve, 800));
+      } else {
+        // Jiná chyba, vrátíme ji
+        console.log("Nepřekonatelná chyba při přechodu do stavu platby", data.errors || data.data?.transitionOrderToState);
+        return data.data?.transitionOrderToState || {
+          errorCode: 'GRAPHQL_ERROR',
+          message: data.errors?.map((e:any) => e.message).join(', ') || 'Neznámá chyba'
+        };
+      }
     }
     
-    return data.data.transitionOrderToState;
-  } catch (error) {
-    console.error('Chyba při přepnutí objednávky do stavu platby:', error);
-    throw error;
+    // Pokud jsme sem došli, ani jeden pokus nebyl úspěšný
+    return {
+      errorCode: 'MAX_ATTEMPTS_REACHED',
+      message: 'Nepodařilo se přejít do stavu platby ani po třech pokusech'
+    };
+  } catch (error:any) {
+    console.error(`Chyba při přechodu do stavu platby (request ID: ${requestId}):`, error);
+    return {
+      errorCode: 'API_ERROR',
+      message: error.message || 'Neznámá chyba při přechodu do stavu platby'
+    };
   }
 }
+// Přidejte novou funkci pro stabilizaci stavu objednávky
+
+export async function ensureStableOrderState() {
+  try {
+    console.log("Stabilizuji stav objednávky před pokračováním");
+    
+    // 1. Nejprve diagnostikujeme aktuální stav
+    const diagnosisResult = await diagnoseOrderState();
+    console.log("Diagnostika stavu objednávky:", diagnosisResult);
+    
+    // 2. Pokud objednávka není v AddingItems, pokusíme se ji vrátit do toho stavu
+    if (diagnosisResult.success && diagnosisResult.order.state !== 'AddingItems') {
+      console.log("Objednávka není ve stavu AddingItems, pokusím se o reset");
+      
+      const resetResponse = await fetch(VENDURE_API_URL, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `
+            mutation {
+              transitionOrderToState(state: "AddingItems") {
+                ... on Order {
+                  id
+                  state
+                }
+                ... on ErrorResult {
+                  errorCode
+                  message
+                }
+              }
+            }
+          `
+        })
+      });
+      
+      const resetData = await resetResponse.json();
+      console.log("Výsledek resetu do stavu AddingItems:", resetData);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("Chyba při stabilizaci stavu objednávky:", error);
+    return false;
+  }
+}
+
 // Úprava completeOrder funkce pro zajištění aktualizace skladu
 // Upravená funkce completeOrder - přejde do správného stavu
 export async function completeOrder() {
@@ -623,21 +894,19 @@ export async function completeOrder() {
   }
 }
 
+// Nahraďte stávající addCashOnDeliveryPayment
+
 export async function addCashOnDeliveryPayment() {
   try {
+    console.log("Přidávám platbu dobírkou");
     const response = await fetch(VENDURE_API_URL, {
       method: 'POST',
       credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         query: `
           mutation {
-            addPaymentToOrder(input: {
-              method: "cash-on-delivery",
-              metadata: {}
-            }) {
+            addPaymentToOrder(input: { method: "cash-on-delivery", metadata: {} }) {
               ... on Order {
                 id
                 code
@@ -654,13 +923,46 @@ export async function addCashOnDeliveryPayment() {
     });
 
     const data = await response.json();
+    console.log("Odpověď z platby dobírkou:", data);
     
     if (data.errors) {
-      console.error("GraphQL chyby při přidávání platby dobírkou:", data.errors);
+      console.error("GraphQL chyby:", data.errors);
       return {
         errorCode: 'GRAPHQL_ERROR',
         message: data.errors.map((e: any) => e.message).join(', ')
       };
+    }
+    
+    // Pokud je platba úspěšně přidána, automaticky dokončíme objednávku
+    if (!data.data.addPaymentToOrder.errorCode) {
+      const settleResponse = await fetch(VENDURE_API_URL, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `
+            mutation {
+              transitionOrderToState(state: "PaymentSettled") {
+                ... on Order {
+                  id
+                  code
+                  state
+                }
+                ... on ErrorResult {
+                  errorCode
+                  message
+                }
+              }
+            }
+          `
+        })
+      });
+      
+      const settleData = await settleResponse.json();
+      console.log("Výsledek dokončení objednávky:", settleData);
+      
+      // Vracíme původní objednávku pro zachování kompatibility
+      return data.data.addPaymentToOrder;
     }
     
     return data.data.addPaymentToOrder;
@@ -669,6 +971,186 @@ export async function addCashOnDeliveryPayment() {
     return {
       errorCode: 'API_ERROR',
       message: error.message || "Chyba při přidávání platby dobírkou"
+    };
+  }
+}
+
+export async function verifyOrderBeforePayment() {
+  try {
+    const response = await fetch(VENDURE_API_URL, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          query {
+            activeOrder {
+              id
+              code
+              state
+              customer {
+                id
+                emailAddress
+              }
+              shippingAddress {
+                fullName
+                streetLine1
+                city
+                postalCode
+              }
+              shippingLines {
+                shippingMethod {
+                  id
+                  name
+                }
+              }
+            }
+          }
+        `
+      })
+    });
+    
+    const data = await response.json();
+    console.log("Aktuální stav objednávky před platbou:", data);
+    
+    if (data.errors) {
+      return {
+        success: false,
+        message: data.errors.map((e: any) => e.message).join(', ')
+      };
+    }
+    
+    const order = data.data.activeOrder;
+    
+    // Kontrola, zda jsou nastaveny všechny potřebné údaje
+    const hasShippingAddress = Boolean(
+      order?.shippingAddress?.fullName && 
+      order?.shippingAddress?.streetLine1 && 
+      order?.shippingAddress?.city
+    );
+    
+    const hasShippingMethod = Boolean(order?.shippingLines && order?.shippingLines.length > 0);
+    const hasCustomer = Boolean(order?.customer?.id);
+    
+    return {
+      success: hasShippingAddress && hasShippingMethod && hasCustomer,
+      order: order,
+      issues: {
+        shippingAddress: !hasShippingAddress,
+        shippingMethod: !hasShippingMethod,
+        customer: !hasCustomer
+      }
+    };
+  } catch (error) {
+    console.error("Chyba při ověřování stavu objednávky:", error);
+    return {
+      success: false,
+      message: "Chyba při ověřování stavu objednávky"
+    };
+  }
+}
+
+
+// Přidat na konec souboru
+// Nahraďte stávající diagnoseOrderState
+
+// Nahraďte stávající funkci diagnoseOrderState pro lepší detekci problémů
+
+export async function diagnoseOrderState() {
+  try {
+    console.log("Provádím diagnostiku stavu objednávky");
+    const response = await fetch(VENDURE_API_URL, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `
+          query {
+            activeOrder {
+              id
+              code
+              state
+              customer { 
+                id 
+                emailAddress
+                firstName
+                lastName
+              }
+              shippingAddress { 
+                fullName 
+                streetLine1 
+                city 
+                postalCode 
+                countryCode 
+              }
+              shippingLines { 
+                shippingMethod { 
+                  id 
+                  name 
+                } 
+              }
+              lines { 
+                id 
+                quantity 
+                productVariant { 
+                  id 
+                  name 
+                } 
+              }
+              payments {
+                id
+                amount
+                state
+                method
+              }
+            }
+          }
+        `
+      })
+    });
+    
+    const data = await response.json();
+    console.log("Diagnostika stavu objednávky - surová data:", data);
+    
+    if (data.errors) {
+      return {
+        success: false,
+        message: data.errors.map((e: any) => e.message).join(', ')
+      };
+    }
+    
+    const order = data.data?.activeOrder;
+    if (!order) {
+      return {
+        success: false,
+        message: "Není aktivní objednávka"
+      };
+    }
+    
+    // Kontrola podmínek pro přechod do stavu ArrangingPayment
+    const hasCustomer = Boolean(order.customer?.id);
+    const hasShippingAddress = Boolean(order.shippingAddress?.fullName && order.shippingAddress?.streetLine1);
+    const hasShippingMethod = Boolean(order.shippingLines && order.shippingLines.length > 0);
+    const hasItems = Boolean(order.lines && order.lines.length > 0);
+    
+    return {
+      success: true,
+      order: order,
+      readyForPayment: hasCustomer && hasShippingAddress && hasShippingMethod && hasItems,
+      issues: {
+        customer: !hasCustomer,
+        shippingAddress: !hasShippingAddress,
+        shippingMethod: !hasShippingMethod,
+        items: !hasItems
+      }
+    };
+  } catch (error: any) {
+    console.error("Chyba při diagnostice stavu objednávky:", error);
+    return {
+      success: false,
+      message: error.message || "Neznámá chyba při diagnostice"
     };
   }
 }
