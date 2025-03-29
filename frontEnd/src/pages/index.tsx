@@ -6,7 +6,7 @@ import { getUserInfo } from "./api/getUserInfo";
 import { registerUser } from "./api/registerUser";
 import toast, { Toaster } from 'react-hot-toast';
 import { logoutUser } from "./api/logoutUser";
-import { getActiveOrder, ensureOrderInAddingItemsState, addItemToOrder, removeOrderLine } from "./api/cartApi";
+import { getActiveOrder, ensureOrderInAddingItemsState, addItemToOrder, removeOrderLine, resetOrderToAddingItems } from "./api/cartApi";
 import { getShippingMethods, diagnoseOrderState, verifyOrderBeforePayment, addCashOnDeliveryPayment, addGopayPayment, setCustomerForOrder, getPaymentMethods, setShippingMethod, addPayment, completeOrder, transitionOrderToArrangingPayment } from "./api/checkoutApi";
 import Image from "next/image";
 // Definice typů pro správnou typovou kontrolu
@@ -240,6 +240,37 @@ export default function Home() {
     setCheckoutStep('summary');
   };
 
+  // Přidejte do Home komponenty
+const recoverSession = async () => {
+  try {
+    // Nejprve zkusíme získat aktuální objednávku
+    const activeOrder = await getActiveOrder();
+    
+    if (!activeOrder) {
+      console.log("Nemáme aktivní objednávku, nelze obnovit");
+      notifyError("Vaše session vypršela. Přidejte prosím znovu zboží do košíku.");
+      return false;
+    }
+    
+    // Pokud objednávka existuje, ale není ve stavu AddingItems, resetujeme ji
+    if (activeOrder.state !== 'AddingItems') {
+      const resetResult = await resetOrderToAddingItems();
+      if (!resetResult.success) {
+        notifyError("Nepodařilo se obnovit košík. Zkuste to prosím znovu.");
+        return false;
+      }
+    }
+    
+    // Obnovíme košík v UI
+    setCart(await getActiveOrder());
+    return true;
+  } catch (error) {
+    console.error("Chyba při obnově session:", error);
+    notifyError("Nepodařilo se obnovit vaši session. Přidejte prosím znovu zboží do košíku.");
+    return false;
+  }
+};
+
 
   // Funkce pro potvrzení objednávky
 // Funkce pro potvrzení objednávky
@@ -447,10 +478,53 @@ const handleCompleteOrder = async () => {
     const transitionResult = await transitionResponse.json();
     console.log("Výsledek přechodu do stavu platby:", transitionResult);
     
-    if (transitionResult.data?.transitionOrderToState?.errorCode) {
-      notifyError(transitionResult.data.transitionOrderToState.message || "Nepodařilo se přejít do stavu platby");
-      return;
-    }
+    // V handleCompleteOrder před zpracováním platby
+// Po transition do ArrangingPayment:
+if (!transitionResult.data?.transitionOrderToState) {
+  console.error("Chybí odpověď při přechodu do stavu platby:", transitionResult);
+  
+  // Pokusíme se obnovit session
+  const recovered = await recoverSession();
+  if (!recovered) {
+    notifyError("Byla ztracena reference na váš košík. Zkuste to prosím znovu.");
+    return;
+  }
+  
+  // Po úspěšné obnově zkusíme znovu přejít do stavu platby
+  console.log("Opakuji přechod do stavu platby po obnově session");
+  const retryResponse = await fetch("http://localhost:3000/shop-api", {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: `
+        mutation {
+          transitionOrderToState(state: "ArrangingPayment") {
+            ... on Order {
+              id
+              state
+            }
+            ... on OrderStateTransitionError {
+              errorCode
+              message
+              transitionError
+            }
+            ... on ErrorResult {
+              errorCode
+              message
+            }
+          }
+        }
+      `
+    })
+  });
+  
+  const retryResult = await retryResponse.json();
+  if (retryResult.data?.transitionOrderToState?.errorCode) {
+    notifyError(retryResult.data.transitionOrderToState.message || "Nepodařilo se přejít do stavu platby ani po obnově");
+    return;
+  }
+}
     
     // 5. Zpracování platby podle vybrané metody
     // 5. Zpracování platby podle vybrané metody
@@ -663,6 +737,21 @@ const fetchCart = async () => {
     console.log('Košík načten:', activeOrder);
     
     if (activeOrder) {
+      // Kontrola stavu - pokud není v AddingItems a máme košík
+      if (activeOrder.state !== 'AddingItems' && activeOrder.lines && activeOrder.lines.length > 0) {
+        console.log(`Košík je ve stavu ${activeOrder.state}, ale měl by být v AddingItems. Pokouším se o opravu.`);
+        
+        try {
+          await resetOrderToAddingItems();
+          // Po resetování načteme košík znovu
+          const updatedOrder = await getActiveOrder();
+          setCart(updatedOrder as Cart);
+          return;
+        } catch (resetError) {
+          console.error("Nepodařilo se resetovat stav košíku:", resetError);
+        }
+      }
+      
       setCart(activeOrder as Cart);
     } else {
       // Pokud není žádný aktivní košík, nastavíme null
@@ -670,7 +759,6 @@ const fetchCart = async () => {
     }
   } catch (error: any) {
     console.error('Chyba při načítání košíku:', error);
-    // U chyby načítání košíku NEMÁ smysl zobrazovat notifikaci - uživatel by ji viděl například při prázdném košíku
   }
 };
 
@@ -784,6 +872,25 @@ const handleRemoveFromCart = async (orderLineId: string) => {
     checkUserAndCart();
   }, []);
 
+
+  // Přidejte do useEffect bloku v Home komponentě
+useEffect(() => {
+  // Funkce pro zachycení opuštění checkout stránky
+  const handleLeaveCheckout = () => {
+    if (activeSection === 'checkout' && checkoutStep === 'summary') {
+      // Resetovat stav objednávky při opuštění
+      resetOrderToAddingItems().catch(console.error);
+    }
+  };
+
+  // Přidání event listenerů pro zachycení navigace
+  window.addEventListener('beforeunload', handleLeaveCheckout);
+  
+  return () => {
+    window.removeEventListener('beforeunload', handleLeaveCheckout);
+  };
+}, [activeSection, checkoutStep]);
+
   return (
     <div className="container">
       <Toaster position="top-right" />
@@ -791,17 +898,89 @@ const handleRemoveFromCart = async (orderLineId: string) => {
       <header>
         <h1>E-commerce obchod</h1>
         <nav>
-          <button onClick={() => setActiveSection('products')}>Produkty</button>
-          <button onClick={() => setActiveSection('search')}>Vyhledávání</button>
+          <button onClick={async () => {
+                  // Resetujeme stav objednávky před návratem zpět k platbě
+                  try {
+                    const result = await resetOrderToAddingItems();
+                    if (result.success) {
+                      setActiveSection('products');
+                      notify("Návrat k platební metodě byl úspěšný");
+                      await fetchCart(); // Aktualizujeme košík po změně stavu
+                    } else {
+                      notifyError(result.error || "Nepodařilo se vrátit zpět");
+                    }
+                  } catch (error) {
+                    notifyError("Problém při návratu k platební metodě");
+                    console.error(error);
+                  }
+                }} >Produkty</button>
+          <button onClick={async () => {
+                  // Resetujeme stav objednávky před návratem zpět k platbě
+                  try {
+                    const result = await resetOrderToAddingItems();
+                    if (result.success) {
+                      setActiveSection('search');
+                      notify("Návrat k platební metodě byl úspěšný");
+                      await fetchCart(); // Aktualizujeme košík po změně stavu
+                    } else {
+                      notifyError(result.error || "Nepodařilo se vrátit zpět");
+                    }
+                  } catch (error) {
+                    notifyError("Problém při návratu k platební metodě");
+                    console.error(error);
+                  }
+                }} >Vyhledávání</button>
           {currentUser ? (
             <>
-              <button onClick={() => setActiveSection('cart')}>Košík</button>
+              <button onClick={async () => {
+                  // Resetujeme stav objednávky před návratem zpět k platbě
+                  try {
+                    const result = await resetOrderToAddingItems();
+                    if (result.success) {
+                      setActiveSection('cart');
+                      await fetchCart(); // Aktualizujeme košík po změně stavu
+                    } else {
+                      notifyError(result.error || "Nepodařilo se vrátit zpět");
+                    }
+                  } catch (error) {
+                    notifyError("Problém při návratu k platební metodě");
+                    console.error(error);
+                  }
+                }} >Košík</button>
               <button onClick={handleLogout}>Odhlásit se</button>
             </>
           ) : (
             <>
-              <button onClick={() => setActiveSection('login')}>Přihlášení</button>
-              <button onClick={() => setActiveSection('register')}>Registrace</button>
+              <button onClick={async () => {
+                  // Resetujeme stav objednávky před návratem zpět k platbě
+                  try {
+                    const result = await resetOrderToAddingItems();
+                    if (result.success) {
+                      setActiveSection('login');
+                      await fetchCart(); // Aktualizujeme košík po změně stavu
+                    } else {
+                      notifyError(result.error || "Nepodařilo se vrátit zpět");
+                    }
+                  } catch (error) {
+                    notifyError("Problém při návratu k platební metodě");
+                    console.error(error);
+                  }
+                }} >Přihlášení</button>
+              <button onClick={async () => {
+                  // Resetujeme stav objednávky před návratem zpět k platbě
+                  try {
+                    const result = await resetOrderToAddingItems();
+                    if (result.success) {
+                      setActiveSection('register');
+                      await fetchCart(); // Aktualizujeme košík po změně stavu
+                    } else {
+                      notifyError(result.error || "Nepodařilo se vrátit zpět");
+                    }
+                  } catch (error) {
+                    notifyError("Problém při návratu k platební metodě");
+                    console.error(error);
+                  }
+                }} >Registrace</button>
             </>
           )}
         </nav>
@@ -980,24 +1159,22 @@ const handleRemoveFromCart = async (orderLineId: string) => {
         <div className="cart-summary">
           <p>Celková cena: {cart.totalWithTax} Kč</p>
           <div className="cart-actions">
-            <button onClick={handleCheckout} className="checkout-btn">Pokračovat k objednávce</button>
+            <button onClick={handleCheckout} className="checkout-btn">
+              Pokračovat k objednávce
+            </button>
             <button 
               onClick={async () => {
                 try {
-                  // Postupně odstraníme všechny položky
-                  for (const line of cart.lines) {
-                    await removeOrderLine(line.id);
-                  }
-                  // Aktualizujeme košík
-                  setTimeout(fetchCart, 800);
-                  notify('Košík byl vymazán');
+                  await resetOrderToAddingItems();
+                  await fetchCart();
+                  notify('Košík byl obnoven');
                 } catch (error) {
-                  notifyError('Nepodařilo se vymazat košík');
+                  notifyError('Nepodařilo se obnovit košík');
                 }
               }}
-              className="clear-cart-btn"
+              className="restore-cart-btn"
             >
-              Vymazat košík
+              Obnovit košík
             </button>
           </div>
         </div>
@@ -1302,6 +1479,12 @@ const handleRemoveFromCart = async (orderLineId: string) => {
                 >
                   Pokračovat k souhrnu objednávky
                 </button>
+                <button 
+                  className="btn-secondary" 
+                  onClick={() => setCheckoutStep('shipping')}
+                >
+                  Zpět k doručení
+                </button>
               </div>
             )}
           
@@ -1340,7 +1523,25 @@ const handleRemoveFromCart = async (orderLineId: string) => {
                 Dokončit objednávku
               </button>
               
-              <button className="btn-secondary" onClick={() => setCheckoutStep('payment')} style={{marginTop: "10px"}}>
+              <button 
+                className="btn-secondary" 
+                onClick={async () => {
+                  // Resetujeme stav objednávky před návratem zpět k platbě
+                  try {
+                    const result = await resetOrderToAddingItems();
+                    if (result.success) {
+                      setCheckoutStep('payment');
+                      await fetchCart(); // Aktualizujeme košík po změně stavu
+                    } else {
+                      notifyError(result.error || "Nepodařilo se vrátit zpět");
+                    }
+                  } catch (error) {
+                    notifyError("Problém při návratu k platební metodě");
+                    console.error(error);
+                  }
+                }} 
+                style={{marginTop: "10px"}}
+              >
                 Zpět k platbě
               </button>
             </div>

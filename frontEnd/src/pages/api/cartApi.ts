@@ -227,6 +227,86 @@ export async function getActiveOrder() {
     }
   }
 
+
+// Přidejte do cartApi.ts
+export async function resetOrderToAddingItems() {
+  try {
+    console.log("Resetuji stav objednávky do AddingItems");
+    
+    // Nejprve zjistíme aktuální stav objednávky
+    const currentOrder = await getActiveOrder();
+    
+    if (!currentOrder) {
+      console.log("Nenalezena žádná aktivní objednávka");
+      return { success: false, error: "Není aktivní objednávka" };
+    }
+    
+    console.log(`Aktuální stav objednávky: ${currentOrder.state}`);
+    
+    // Pokud je již ve stavu AddingItems, není třeba nic dělat
+    if (currentOrder.state === 'AddingItems') {
+      return { success: true, message: "Již ve stavu AddingItems" };
+    }
+    
+    // Pokusíme se přejít do stavu AddingItems
+    const response = await fetch("http://localhost:3000/shop-api", {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `
+          mutation {
+            transitionOrderToState(state: "AddingItems") {
+              ... on Order {
+                id
+                state
+              }
+              ... on OrderStateTransitionError {
+                errorCode
+                message
+                transitionError
+              }
+              ... on ErrorResult {
+                errorCode
+                message
+              }
+            }
+          }
+        `
+      })
+    });
+    
+    const result = await response.json();
+    console.log("Výsledek přechodu do stavu AddingItems:", result);
+    
+    if (result.errors) {
+      console.error("GraphQL chyby:", result.errors);
+      return { 
+        success: false, 
+        error: result.errors[0]?.message || "Chyba při přechodu stavu" 
+      };
+    }
+    
+    if (result.data?.transitionOrderToState?.errorCode) {
+      return { 
+        success: false, 
+        error: result.data.transitionOrderToState.message 
+      };
+    }
+    
+    return { 
+      success: true, 
+      message: "Stav úspěšně resetován na AddingItems" 
+    };
+  } catch (error) {
+    console.error("Chyba při resetování stavu objednávky:", error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Neznámá chyba"
+    };
+  }
+}
+
 // Aktualizujte funkci pro odstranění položky z košíku
 // Aktualizujte funkci pro odstranění položky
 export async function removeOrderLine(orderLineId: string) {
